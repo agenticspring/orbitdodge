@@ -71,6 +71,22 @@ const els = {};
 const winListeners = {};
 let rafCb = null;
 
+/* Deterministic RNG for the suite: production spawns asteroids with the real
+ * Math.random, so a 3.3s "ship survives" segment is probabilistic (an unlucky
+ * far-side spawn can legitimately drift into the ship — that is the game, not
+ * a bug). Seeding Math.random inside the sandbox makes the whole playtest
+ * deterministic without touching game code. */
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const seededMath = Object.create(Math);
+seededMath.random = mulberry32(Number(process.env.OD_SEED || 7));
+
 const sandbox = {
   console: {
     log: () => {}, warn: () => {}, info: () => {},
@@ -89,7 +105,7 @@ const sandbox = {
   navigator: {}, devicePixelRatio: 1,
   addEventListener: (t, f) => { (winListeners[t] = winListeners[t] || []).push(f); },
   removeEventListener: () => {},
-  Math, JSON, Object, Array, parseFloat, isFinite, parseInt, String, Number, Boolean, Date, RegExp, Error,
+  Math: seededMath, JSON, Object, Array, parseFloat, isFinite, parseInt, String, Number, Boolean, Date, RegExp, Error,
 };
 sandbox.window = sandbox;
 sandbox.self = sandbox;

@@ -1,0 +1,12 @@
+# static site — no build artifacts expected, but keep the tree clean
+node_modules/
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+.env
+.env.*
+*.pem
+*.key
+.vscode/
+.idea/

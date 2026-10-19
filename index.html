@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>OrbitDodge — one-tap orbit dodger</title>
+<meta name="description" content="OrbitDodge: a one-tap arcade dodger. Tap to switch orbit, dodge the asteroids, survive. Zero dependencies, mobile-friendly.">
+<style>
+  :root{ --bg:#04060d; --ink:#e8f0ff; --dim:#8fa3c8; --accent:#5ee6ff; --warn:#ffb347; }
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;background:var(--bg);overflow:hidden;}
+  body{
+    display:flex;align-items:center;justify-content:center;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    color:var(--ink);user-select:none;-webkit-user-select:none;
+  }
+  /* Portrait letterbox: 480x720 playfield, centered, aspect preserved */
+  #stage{
+    position:relative;
+    height:min(100dvh,150vw);
+    aspect-ratio:480/720;
+    background:var(--bg);
+    overflow:hidden;
+    touch-action:none;
+    cursor:pointer;
+  }
+  #game{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none;}
+  #hud{
+    position:absolute;top:0;left:0;right:0;
+    display:flex;justify-content:space-between;align-items:flex-start;
+    padding:calc(10px + env(safe-area-inset-top)) 16px 0 16px;
+    pointer-events:none;font-size:17px;line-height:1.35;z-index:3;
+  }
+  #hud .lab{font-size:10px;letter-spacing:.18em;color:var(--dim);}
+  #hud .val{font-size:22px;font-weight:700;color:var(--ink);text-shadow:0 0 12px rgba(94,230,255,.45);}
+  #hud .right{text-align:right;}
+  #muteBtn{
+    position:absolute;top:calc(64px + env(safe-area-inset-top));right:12px;z-index:5;
+    width:46px;height:46px;border-radius:12px;border:1px solid rgba(143,163,200,.35);
+    background:rgba(10,16,30,.72);color:var(--ink);font-size:21px;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;
+  }
+  #muteBtn:active{transform:scale(.93);}
+  .overlay{
+    position:absolute;inset:0;z-index:4;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;padding:28px;background:rgba(4,6,13,.62);
+    backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
+  }
+  .overlay.hidden{display:none;}
+  .overlay h1{font-size:44px;letter-spacing:.08em;font-weight:800;color:#fff;
+    text-shadow:0 0 22px rgba(94,230,255,.75),0 0 60px rgba(94,230,255,.35);}
+  .overlay h1 span{color:var(--accent);}
+  .tag{margin-top:6px;color:var(--dim);font-size:13px;letter-spacing:.28em;text-transform:uppercase;}
+  .how{margin:30px 0 8px;font-size:15px;line-height:2;color:var(--ink);max-width:330px;}
+  .how b{color:var(--accent);}
+  .cta{
+    margin-top:26px;font-size:20px;font-weight:700;letter-spacing:.14em;color:#04121a;
+    background:linear-gradient(180deg,#8ff3ff,#3fc7ef);border-radius:14px;
+    padding:16px 42px;min-width:250px;min-height:58px;
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 0 26px rgba(94,230,255,.55);animation:pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.045)}}
+  .bestline{margin-top:18px;color:var(--dim);font-size:14px;}
+  .bestline b{color:var(--warn);}
+  #newBest{
+    display:none;margin-top:10px;font-size:16px;font-weight:700;color:#04121a;
+    background:linear-gradient(180deg,#ffd97a,#ff9d3c);border-radius:10px;padding:8px 22px;
+    box-shadow:0 0 20px rgba(255,180,70,.6);animation:pulse 1.2s ease-in-out infinite;
+  }
+  #newBest.show{display:block;}
+  .final{font-size:15px;color:var(--dim);margin-top:6px;}
+  .final b{color:#fff;font-size:34px;display:block;margin:4px 0 2px;text-shadow:0 0 16px rgba(94,230,255,.6);}
+  .restart{margin-top:26px;font-size:14px;color:var(--dim);letter-spacing:.12em;animation:pulse 1.6s ease-in-out infinite;}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game" width="480" height="720"></canvas>
+  <div id="hud">
+    <div><div class="lab">TIME</div><div class="val" id="score">0.0s</div></div>
+    <div class="right"><div class="lab">BEST</div><div class="val" id="best">0.0s</div></div>
+  </div>
+  <button id="muteBtn" aria-label="toggle sound">🔊</button>
+
+  <div id="title" class="overlay">
+    <h1>ORBIT<span>DODGE</span></h1>
+    <p class="tag">one-tap orbit dodger</p>
+    <div class="how">
+      <p>🛰️ Your ship orbits the planet.</p>
+      <p>👆 <b>TAP / CLICK / SPACE</b> to switch orbit.</p>
+      <p>☄️ Dodge the asteroids. Survive.</p>
+    </div>
+    <div class="cta">TAP TO START</div>
+    <p class="bestline" id="titleBest"></p>
+  </div>
+
+  <div id="over" class="overlay hidden">
+    <h1>GAME <span>OVER</span></h1>
+    <div id="newBest">★ NEW BEST ★</div>
+    <div class="final">SURVIVED<b id="overScore">0.0s</b></div>
+    <div class="final">BEST<b id="overBest">0.0s</b></div>
+    <div class="restart">TAP TO RETRY</div>
+  </div>
+</div>
+<script>
+/*__LOGIC_START__*/
+'use strict';
+/* Pure game logic — DOM-free so it can be unit-tested in Node.
+   The automated tests extract this block verbatim from index.html. */
+var W=480,H=720,CX=240,CY=405,R_IN=102,R_OUT=188,SHIP_R=11,TAU=Math.PI*2;
+
+function normAngle(a){a%=TAU;if(a>Math.PI)a-=TAU;else if(a<-Math.PI)a+=TAU;return a;}
+function angDiff(a,b){return Math.abs(normAngle(a-b));}
+function collide(x1,y1,r1,x2,y2,r2){var dx=x2-x1,dy=y2-y1,rr=r1+r2;return dx*dx+dy*dy<rr*rr;}
+function shipTargetRadius(orbit){return orbit===0?R_IN:R_OUT;}
+function difficultyAt(t){
+  return {
+    spawnInterval:Math.max(0.42,1.35-t*0.022),
+    astSpeed:Math.min(2.4,0.85+t*0.016),
+    shipSpeed:1.7+Math.min(0.5,t*0.004)
+  };
+}
+function makeAsteroid(orbit,shipAngle,rng){
+  return {
+    orbit:orbit,
+    angle:shipAngle+Math.PI+(rng()*2-1)*1.1, /* spawn on the far side: never an instant unfair hit */
+    dir:rng()<0.5?-1:1,
+    r:11+rng()*10,
+    rot:rng()*TAU,
+    spin:(rng()*2-1)*3,
+    verts:7+Math.floor(rng()*4),
+    wob:0.75+rng()*0.4,
+    speedMul:0.75+rng()*0.6
+  };
+}
+function lerpR(r,target,dt){
+  var d=target-r,s=520*dt; /* px per second — snappy orbit switch */
+  if(Math.abs(d)<=s)return target;
+  return r+(d>0?s:-s);
+}
+/*__LOGIC_END__*/
+/*__GAME_START__*/
+/* ---------- state ---------- */
+var G={
+  state:'title',           /* title | playing | dying | gameover */
+  shipAngle:-Math.PI/2, shipR:R_IN, orbit:0,
+  asteroids:[], particles:[], stars:[],
+  time:0, spawnT:0, score:0, best:0, isBest:false,
+  deathT:0, overAt:0, muted:false, flash:0
+};
+function nowMs(){ return (typeof performance!=='undefined'&&performance.now)?performance.now():Date.now(); }
+function loadBest(){ try{var v=parseFloat(localStorage.getItem('orbitdodge_best_v1'));return (isFinite(v)&&v>0)?v:0;}catch(e){return 0;} }
+function saveBest(){ try{localStorage.setItem('orbitdodge_best_v1',String(G.best));}catch(e){} }
+G.best=loadBest();
+
+for(var si=0;si<130;si++)G.stars.push({x:Math.random()*W,y:Math.random()*H,r:0.4+Math.random()*1.4,v:6+Math.random()*22,tw:Math.random()*TAU});
+
+/* ---------- audio: WebAudio synth, no assets ---------- */
+var AC=null;
+function ac(){
+  if(G.muted)return null;
+  try{
+    var Ctor=(typeof window!=='undefined')&&(window.AudioContext||window.webkitAudioContext);
+    if(!Ctor)return null;
+    if(!AC)AC=new Ctor();
+    if(AC.state==='suspended')AC.resume();
+    return AC;
+  }catch(e){return null;}
+}
+function blip(f0,f1,dur,type,vol){
+  var c=ac();if(!c)return;
+  try{
+    var o=c.createOscillator(),g=c.createGain(),t=c.currentTime;
+    o.type=type||'square';
+    o.frequency.setValueAtTime(Math.max(1,f0),t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(1,f1),t+dur);
+    g.gain.setValueAtTime(vol||0.07,t);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(g);g.connect(c.destination);
+    o.start(t);o.stop(t+dur+0.03);
+  }catch(e){}
+}
+function noiseBurst(dur,vol){
+  var c=ac();if(!c)return;
+  try{
+    var n=Math.floor(c.sampleRate*dur),buf=c.createBuffer(1,n,c.sampleRate),d=buf.getChannelData(0);
+    for(var i=0;i<n;i++)d[i]=(Math.random()*2-1)*(1-i/n);
+    var s=c.createBufferSource();s.buffer=buf;
+    var f=c.createBiquadFilter();f.type='lowpass';f.frequency.value=750;
+    var g=c.createGain();g.gain.value=vol||0.22;
+    s.connect(f);f.connect(g);g.connect(c.destination);
+    s.start();
+  }catch(e){}
+}
+function sfxSwitch(){blip(480,920,0.09,'square',0.06);}
+function sfxExplode(){noiseBurst(0.5,0.25);blip(220,38,0.45,'sawtooth',0.12);}
+function sfxNewBest(){var n=[660,880,1174,1568],i=0;(function next(){if(i<n.length){blip(n[i],n[i],0.12,'triangle',0.09);i++;setTimeout(next,110);}})();}
+function initAudio(){ac();} /* unlock on first gesture */
+
+/* ---------- DOM ---------- */
+var cv=document.getElementById('game'),ctx=cv.getContext('2d');
+var scoreEl=document.getElementById('score'),bestEl=document.getElementById('best');
+var titleEl=document.getElementById('title'),overEl=document.getElementById('over');
+var overScore=document.getElementById('overScore'),overBest=document.getElementById('overBest');
+var newBestEl=document.getElementById('newBest'),titleBest=document.getElementById('titleBest');
+var stage=document.getElementById('stage'),muteBtn=document.getElementById('muteBtn');
+
+function fmt(s){return s.toFixed(1)+'s';}
+function hud(){
+  var st=fmt(G.score);
+  if(scoreEl.textContent!==st)scoreEl.textContent=st;
+  var bt=fmt(Math.max(G.best,G.score));
+  if(bestEl.textContent!==bt)bestEl.textContent=bt;
+}
+function refreshTitleBest(){
+  titleBest.innerHTML=G.best>0?('best: <b>'+fmt(G.best)+'</b>'):'no runs yet — good luck, pilot';
+}
+
+/* ---------- flow ---------- */
+function startGame(){
+  G.state='playing';
+  G.shipAngle=-Math.PI/2;G.shipR=R_IN;G.orbit=0;
+  G.asteroids.length=0;G.particles.length=0;
+  G.time=0;G.score=0;G.spawnT=0.9;G.isBest=false;G.flash=0;
+  titleEl.classList.add('hidden');overEl.classList.add('hidden');
+  hud();
+}
+function toggleOrbit(){
+  G.orbit=1-G.orbit;
+  sfxSwitch();
+}
+function burst(x,y){
+  for(var i=0;i<46;i++){
+    var a=Math.random()*TAU,sp=60+Math.random()*260;
+    G.particles.push({x:x,y:y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,
+      life:0,max:0.5+Math.random()*0.7,r:1.5+Math.random()*3.5,
+      col:Math.random()<0.5?'255,180,90':'255,240,220'});
+  }
+}
+function die(){
+  var sx=CX+Math.cos(G.shipAngle)*G.shipR,sy=CY+Math.sin(G.shipAngle)*G.shipR;
+  burst(sx,sy);
+  G.state='dying';G.deathT=0;G.flash=1;
+  sfxExplode();
+  if(G.score>G.best){G.best=G.score;G.isBest=true;saveBest();}
+}
+function showGameOver(){
+  G.state='gameover';G.overAt=nowMs();
+  overScore.textContent=fmt(G.score);
+  overBest.textContent=fmt(G.best);
+  if(G.isBest){newBestEl.classList.add('show');sfxNewBest();}
+  else newBestEl.classList.remove('show');
+  overEl.classList.remove('hidden');
+}
+function onPress(e){
+  if(e&&e.preventDefault)e.preventDefault();
+  initAudio();
+  if(G.state==='title')startGame();
+  else if(G.state==='playing')toggleOrbit();
+  else if(G.state==='gameover'){if(nowMs()-G.overAt>600)startGame();}
+}
+
+/* ---------- update ---------- */
+function update(dt){
+  var i,s;
+  for(i=0;i<G.stars.length;i++){s=G.stars[i];s.y+=s.v*dt;s.tw+=dt*3;if(s.y>H+4){s.y=-4;s.x=Math.random()*W;}}
+  for(i=G.particles.length-1;i>=0;i--){var p=G.particles[i];p.life+=dt;
+    if(p.life>=p.max){G.particles.splice(i,1);continue;}
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=0.985;p.vy*=0.985;}
+  if(G.flash>0)G.flash=Math.max(0,G.flash-dt*2.2);
+
+  if(G.state==='dying'){G.deathT+=dt;if(G.deathT>1.0)showGameOver();return;}
+  if(G.state!=='playing')return;
+
+  var d=difficultyAt(G.time);
+  G.time+=dt;G.score=G.time;
+  G.shipAngle+=d.shipSpeed*dt;
+  G.shipR=lerpR(G.shipR,shipTargetRadius(G.orbit),dt);
+  G.spawnT-=dt;
+  if(G.spawnT<=0){
+    G.spawnT=d.spawnInterval;
+    G.asteroids.push(makeAsteroid(Math.random()<0.5?0:1,G.shipAngle,Math.random));
+  }
+  var sx=CX+Math.cos(G.shipAngle)*G.shipR,sy=CY+Math.sin(G.shipAngle)*G.shipR;
+  for(var j=G.asteroids.length-1;j>=0;j--){
+    var a=G.asteroids[j];
+    a.angle+=a.dir*d.astSpeed*a.speedMul*dt;
+    a.rot+=a.spin*dt;
+    var rr=a.orbit===0?R_IN:R_OUT;
+    var ax=CX+Math.cos(a.angle)*rr,ay=CY+Math.sin(a.angle)*rr;
+    if(collide(sx,sy,SHIP_R,ax,ay,a.r*0.92)){die();return;}
+  }
+  /* cull asteroids far behind the ship's current lap to bound the array */
+  if(G.asteroids.length>90)G.asteroids.splice(0,G.asteroids.length-90);
+  hud();
+}
+
+/* ---------- render ---------- */
+function drawPlanet(){
+  var g=ctx.createRadialGradient(CX,CY,10,CX,CY,120);
+  g.addColorStop(0,'rgba(90,200,255,0.55)');
+  g.addColorStop(0.45,'rgba(60,140,255,0.18)');
+  g.addColorStop(1,'rgba(60,140,255,0)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(CX,CY,120,0,TAU);ctx.fill();
+  var p=ctx.createRadialGradient(CX-14,CY-16,8,CX,CY,64);
+  p.addColorStop(0,'#7fd8ff');p.addColorStop(0.55,'#2f7fe0');p.addColorStop(1,'#123a8f');
+  ctx.fillStyle=p;ctx.beginPath();ctx.arc(CX,CY,58,0,TAU);ctx.fill();
+  ctx.strokeStyle='rgba(160,220,255,0.5)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.arc(CX,CY,58,0,TAU);ctx.stroke();
+}
+function drawOrbits(){
+  ctx.lineWidth=2;
+  ctx.strokeStyle=G.orbit===0?'rgba(94,230,255,0.85)':'rgba(94,230,255,0.22)';
+  ctx.beginPath();ctx.arc(CX,CY,R_IN,0,TAU);ctx.stroke();
+  ctx.strokeStyle=G.orbit===1?'rgba(94,230,255,0.85)':'rgba(94,230,255,0.22)';
+  ctx.beginPath();ctx.arc(CX,CY,R_OUT,0,TAU);ctx.stroke();
+}
+function drawShip(){
+  var x=CX+Math.cos(G.shipAngle)*G.shipR,y=CY+Math.sin(G.shipAngle)*G.shipR;
+  var head=G.shipAngle+Math.PI/2; /* direction of travel */
+  ctx.save();ctx.translate(x,y);ctx.rotate(head);
+  ctx.shadowColor='#5ee6ff';ctx.shadowBlur=14;
+  ctx.fillStyle='#eaffff';
+  ctx.beginPath();ctx.moveTo(14,0);ctx.lineTo(-9,9);ctx.lineTo(-5,0);ctx.lineTo(-9,-9);ctx.closePath();ctx.fill();
+  ctx.shadowBlur=0;ctx.restore();
+  /* engine trail */
+  ctx.strokeStyle='rgba(94,230,255,0.5)';ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.arc(CX,CY,G.shipR,G.shipAngle-0.35,G.shipAngle,false);
+  ctx.stroke();
+}
+function drawAsteroid(a){
+  var rr=a.orbit===0?R_IN:R_OUT;
+  var x=CX+Math.cos(a.angle)*rr,y=CY+Math.sin(a.angle)*rr;
+  ctx.save();ctx.translate(x,y);ctx.rotate(a.rot);
+  ctx.fillStyle='#5a4a3f';ctx.strokeStyle='#c9a37e';ctx.lineWidth=2;
+  ctx.beginPath();
+  for(var i=0;i<a.verts;i++){
+    var an=i/a.verts*TAU,rad=a.r*(a.wob+0.18*Math.sin(i*2.7));
+    if(i===0)ctx.moveTo(Math.cos(an)*rad,Math.sin(an)*rad);
+    else ctx.lineTo(Math.cos(an)*rad,Math.sin(an)*rad);
+  }
+  ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.fillStyle='rgba(0,0,0,0.35)';
+  ctx.beginPath();ctx.arc(-a.r*0.25,-a.r*0.2,a.r*0.32,0,TAU);ctx.fill();
+  ctx.restore();
+}
+function render(t){
+  ctx.clearRect(0,0,W,H);
+  var i,s;
+  ctx.fillStyle='#fff';
+  for(i=0;i<G.stars.length;i++){s=G.stars[i];
+    ctx.globalAlpha=0.35+0.4*Math.abs(Math.sin(s.tw));
+    ctx.fillRect(s.x,s.y,s.r,s.r);}
+  ctx.globalAlpha=1;
+  drawPlanet();drawOrbits();
+  for(i=0;i<G.asteroids.length;i++)drawAsteroid(G.asteroids[i]);
+  if(G.state==='title'||G.state==='playing')drawShip();
+  for(i=0;i<G.particles.length;i++){var p=G.particles[i],k=1-p.life/p.max;
+    ctx.fillStyle='rgba('+p.col+','+(k*0.95).toFixed(3)+')';
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r*k+0.4,0,TAU);ctx.fill();}
+  if(G.flash>0){ctx.fillStyle='rgba(255,240,220,'+(G.flash*0.55).toFixed(3)+')';ctx.fillRect(0,0,W,H);}
+}
+
+/* ---------- main loop ---------- */
+var lastTs=0;
+function loop(ts){
+  var dt=(ts-lastTs)/1000;lastTs=ts;
+  if(!(dt>0)||dt>0.05)dt=0.016;
+  update(dt);render(ts);
+  requestAnimationFrame(loop);
+}
+
+/* ---------- input ---------- */
+stage.addEventListener('pointerdown',onPress);
+window.addEventListener('keydown',function(e){
+  if(e.code==='Space'||e.code==='ArrowUp'||e.code==='KeyW'){e.preventDefault();onPress(e);}
+});
+muteBtn.addEventListener('pointerdown',function(e){
+  e.stopPropagation();e.preventDefault();initAudio();
+  G.muted=!G.muted;muteBtn.textContent=G.muted?'🔇':'🔊';
+});
+document.addEventListener('gesturestart',function(e){e.preventDefault();});
+document.addEventListener('dblclick',function(e){e.preventDefault();},{passive:false});
+
+/* ---------- boot ---------- */
+refreshTitleBest();
+hud();
+requestAnimationFrame(function(ts){lastTs=ts;requestAnimationFrame(loop);});
+/*__GAME_END__*/
+</script>
+</body>
+</html>
